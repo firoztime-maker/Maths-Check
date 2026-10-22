@@ -1,0 +1,1890 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Handwritten Invoice Scanner & Digitizer</title>
+  <!-- Tailwind CSS CDN -->
+  <script src="https://cdn.tailwindcss.com"></script>
+  <!-- Lucide Icons CDN -->
+  <script src="https://unpkg.com/lucide@latest"></script>
+  <!-- html2pdf & jsPDF & html2canvas -->
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/html2pdf.js/0.10.1/html2pdf.bundle.min.js"></script>
+
+  <script>
+    tailwind.config = {
+      darkMode: 'class',
+      theme: {
+        extend: {
+          colors: {
+            brand: {
+              50: '#eef2ff',
+              100: '#e0e7ff',
+              500: '#6366f1',
+              600: '#4f46e5',
+              700: '#4338ca',
+            }
+          },
+          animation: {
+            'scan-line': 'scan 2s cubic-bezier(0.4, 0, 0.6, 1) infinite',
+            'pulse-slow': 'pulse 3s cubic-bezier(0.4, 0, 0.6, 1) infinite',
+          },
+          keyframes: {
+            scan: {
+              '0%, 100%': { top: '0%' },
+              '50%': { top: '96%' },
+            }
+          }
+        }
+      }
+    }
+  </script>
+
+  <style>
+    @media print {
+      body * {
+        visibility: hidden;
+      }
+      #print-area, #print-area * {
+        visibility: visible;
+      }
+      #print-area {
+        position: absolute;
+        left: 0;
+        top: 0;
+        width: 100% !important;
+        margin: 0 !important;
+        padding: 0 !important;
+        box-shadow: none !important;
+        background: white !important;
+      }
+      .no-print {
+        display: none !important;
+      }
+    }
+
+    /* Custom scrollbars */
+    ::-webkit-scrollbar {
+      width: 6px;
+      height: 6px;
+    }
+    ::-webkit-scrollbar-track {
+      background: #f1f5f9;
+    }
+    ::-webkit-scrollbar-thumb {
+      background: #cbd5e1;
+      border-radius: 4px;
+    }
+    ::-webkit-scrollbar-thumb:hover {
+      background: #94a3b8;
+    }
+  </style>
+</head>
+<body class="bg-slate-50 text-slate-900 min-h-screen flex flex-col font-sans antialiased">
+
+  <!-- Top Navigation -->
+  <header class="no-print bg-white border-b border-slate-200 sticky top-0 z-40 shadow-sm">
+    <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 h-16 flex items-center justify-between">
+      <div class="flex items-center space-x-3">
+        <div class="w-10 h-10 rounded-xl bg-gradient-to-tr from-indigo-600 to-violet-500 flex items-center justify-center text-white shadow-md shadow-indigo-100">
+          <i data-lucide="scan-line" class="w-5 h-5"></i>
+        </div>
+        <div>
+          <h1 class="font-bold text-lg leading-tight bg-gradient-to-r from-slate-900 via-indigo-950 to-indigo-700 bg-clip-text text-transparent">
+            ScriptInvoice AI
+          </h1>
+          <p class="text-xs text-slate-500 font-medium">Handwritten Invoice Scanner & Math Auditor</p>
+        </div>
+      </div>
+
+      <div class="flex items-center space-x-3">
+        <button id="history-drawer-toggle" class="relative inline-flex items-center space-x-2 text-sm font-medium text-slate-700 bg-slate-100 hover:bg-slate-200 px-3.5 py-2 rounded-lg transition-colors">
+          <i data-lucide="history" class="w-4 h-4 text-slate-500"></i>
+          <span>Recent (Last 10)</span>
+          <span id="history-badge" class="ml-1 px-1.5 py-0.2 bg-indigo-600 text-white text-[10px] rounded-full font-bold">0</span>
+        </button>
+
+        <button id="api-key-modal-btn" title="Configure Gemini API Key" class="inline-flex items-center text-xs font-semibold px-2.5 py-2 rounded-lg border border-slate-200 bg-slate-50 text-slate-700 hover:bg-slate-100 transition">
+          <i data-lucide="key" class="w-3.5 h-3.5 mr-1.5 text-amber-500"></i>
+          <span id="api-status-label">API Key</span>
+        </button>
+      </div>
+    </div>
+  </header>
+
+  <!-- Main Content Layout -->
+  <main class="flex-1 max-w-7xl w-full mx-auto p-4 sm:p-6 lg:p-8 flex flex-col gap-6">
+
+    <!-- Top Action bar & Status banner -->
+    <div class="no-print bg-white p-4 rounded-xl border border-slate-200 shadow-sm flex flex-wrap items-center justify-between gap-4">
+      <div class="flex items-center space-x-3">
+        <div id="status-indicator" class="flex items-center space-x-2 text-sm text-slate-600">
+          <span class="w-2.5 h-2.5 rounded-full bg-slate-400"></span>
+          <span id="status-text">Ready for handwritten invoice upload</span>
+        </div>
+        <div id="discrepancy-badge" class="hidden px-2.5 py-1 text-xs rounded-full font-semibold"></div>
+      </div>
+
+      <div class="flex items-center flex-wrap gap-2">
+        <button id="load-sample-btn" class="inline-flex items-center px-3 py-1.5 bg-indigo-50 text-indigo-700 hover:bg-indigo-100 rounded-lg text-xs font-semibold transition border border-indigo-200">
+          <i data-lucide="file-text" class="w-3.5 h-3.5 mr-1.5"></i>
+          Load Sample Invoice
+        </button>
+        <button id="camera-trigger-btn" class="inline-flex items-center px-3 py-1.5 bg-slate-100 text-slate-700 hover:bg-slate-200 rounded-lg text-xs font-semibold transition border border-slate-300">
+          <i data-lucide="camera" class="w-3.5 h-3.5 mr-1.5"></i>
+          Camera Capture
+        </button>
+        <button id="recalculate-btn" class="inline-flex items-center px-3 py-1.5 bg-emerald-50 text-emerald-700 hover:bg-emerald-100 rounded-lg text-xs font-semibold transition border border-emerald-200">
+          <i data-lucide="calculator" class="w-3.5 h-3.5 mr-1.5"></i>
+          Verify Math
+        </button>
+      </div>
+    </div>
+
+    <!-- Dual Split View: Left (Upload & Raw Image) | Right (Digitized Invoice & Math Engine) -->
+    <div class="grid grid-cols-1 lg:grid-cols-12 gap-6 flex-1">
+      
+      <!-- LEFT COLUMN: Image Input, Preview, and Scanner (5 Cols) -->
+      <section class="lg:col-span-5 flex flex-col space-y-4">
+        
+        <!-- Drag & Drop / Upload Card -->
+        <div class="bg-white rounded-2xl border border-slate-200 p-5 shadow-sm">
+          <div class="flex items-center justify-between mb-3">
+            <h2 class="text-sm font-semibold uppercase tracking-wider text-slate-500 flex items-center">
+              <i data-lucide="image" class="w-4 h-4 mr-2 text-indigo-500"></i>
+              Original Handwritten Source
+            </h2>
+            <span id="source-name" class="text-xs text-slate-400 font-mono truncate max-w-[150px]">No file</span>
+          </div>
+
+          <!-- Drop Area -->
+          <div id="drop-zone" class="border-2 border-dashed border-slate-300 hover:border-indigo-500 bg-slate-50/70 hover:bg-indigo-50/30 transition-all rounded-xl p-6 text-center cursor-pointer relative group">
+            <input type="file" id="file-input" accept="image/png, image/jpeg, image/jpg, image/webp" class="hidden" />
+            
+            <div id="upload-prompt" class="space-y-3">
+              <div class="w-12 h-12 mx-auto rounded-full bg-indigo-100 flex items-center justify-center text-indigo-600 group-hover:scale-110 transition-transform">
+                <i data-lucide="upload-cloud" class="w-6 h-6"></i>
+              </div>
+              <div>
+                <p class="text-sm font-medium text-slate-700">Drop handwritten invoice here</p>
+                <p class="text-xs text-slate-500 mt-1">PNG, JPG, WEBP up to 10MB</p>
+              </div>
+              <div class="pt-1">
+                <span class="inline-block px-3 py-1 bg-white border border-slate-200 shadow-sm rounded-md text-xs font-medium text-slate-700 hover:bg-slate-50">
+                  Browse Device
+                </span>
+              </div>
+            </div>
+
+            <!-- Image View with Laser Scanning Animation -->
+            <div id="preview-wrapper" class="hidden relative rounded-lg overflow-hidden border border-slate-200 bg-black/5 max-h-[460px] flex items-center justify-center">
+              <img id="source-image-preview" src="" alt="Handwritten invoice preview" class="max-h-[440px] w-auto object-contain mx-auto rounded" />
+              
+              <!-- Scan Laser Overlay -->
+              <div id="scan-overlay" class="hidden absolute inset-0 bg-indigo-950/20 backdrop-blur-[1px]">
+                <div class="absolute inset-x-0 h-1.5 bg-gradient-to-r from-transparent via-cyan-400 to-transparent shadow-[0_0_15px_#22d3ee] animate-scan-line"></div>
+                <div class="absolute bottom-4 left-1/2 -translate-x-1/2 bg-slate-900/90 text-cyan-300 text-xs px-3 py-1.5 rounded-full flex items-center space-x-2 border border-cyan-500/30">
+                  <div class="w-2 h-2 rounded-full bg-cyan-400 animate-ping"></div>
+                  <span id="scan-status-label font-mono">Analyzing handwriting with Gemini...</span>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <!-- Bottom upload action helpers -->
+          <div class="mt-4 flex items-center justify-between text-xs text-slate-500">
+            <span class="flex items-center">
+              <i data-lucide="sparkles" class="w-3.5 h-3.5 mr-1 text-amber-500"></i>
+              Extracts items, rates, taxes & notes
+            </span>
+            <button id="replace-image-btn" class="hidden text-indigo-600 hover:text-indigo-800 font-medium">
+              Replace Image
+            </button>
+          </div>
+        </div>
+
+        <!-- Extraction Intelligence & Discrepancy Diagnostics Card -->
+        <div class="bg-white rounded-2xl border border-slate-200 p-5 shadow-sm space-y-3">
+          <h3 class="text-xs font-bold uppercase tracking-wider text-slate-500 flex items-center">
+            <i data-lucide="shield-check" class="w-4 h-4 mr-1.5 text-emerald-600"></i>
+            Math Audit & Confidence Diagnostics
+          </h3>
+          
+          <div id="math-audit-summary" class="bg-slate-50 border border-slate-200 rounded-xl p-3 text-xs space-y-2">
+            <div class="flex justify-between items-center text-slate-600">
+              <span>Handwritten Total on Page:</span>
+              <span id="audit-handwritten-total" class="font-mono font-bold text-slate-800">$0.00</span>
+            </div>
+            <div class="flex justify-between items-center text-slate-600">
+              <span>Calculated Total (Qty × Rate + Tax):</span>
+              <span id="audit-calculated-total" class="font-mono font-bold text-slate-900">$0.00</span>
+            </div>
+            <div class="flex justify-between items-center pt-2 border-t border-slate-200 text-slate-700">
+              <span>Math Differential:</span>
+              <span id="audit-difference" class="font-mono font-bold text-emerald-600">$0.00 (Match)</span>
+            </div>
+          </div>
+
+          <div class="text-[11px] text-slate-500 leading-relaxed bg-amber-50/70 border border-amber-200/80 p-2.5 rounded-lg flex items-start space-x-2">
+            <i data-lucide="info" class="w-4 h-4 text-amber-600 shrink-0 mt-0.5"></i>
+            <div>
+              <strong class="text-amber-900">Handwriting Tip:</strong> Poor handwriting or ambiguous digits (like 1 vs 7, 0 vs 6) are auto-verified against unit pricing and total sums. You can edit any line item directly in the table.
+            </div>
+          </div>
+        </div>
+
+      </section>
+
+      <!-- RIGHT COLUMN: Interactive Editor & PDF Preview tabs (7 Cols) -->
+      <section class="lg:col-span-7 flex flex-col space-y-4">
+        
+        <!-- Controls: Tab Selector & Action Buttons -->
+        <div class="no-print bg-white p-3 rounded-2xl border border-slate-200 shadow-sm flex flex-wrap items-center justify-between gap-3">
+          
+          <!-- View switcher -->
+          <div class="flex bg-slate-100 p-1 rounded-xl">
+            <button id="tab-editor-btn" class="px-3.5 py-1.5 rounded-lg text-xs font-semibold bg-white text-slate-800 shadow-sm transition">
+              <span class="flex items-center"><i data-lucide="edit-3" class="w-3.5 h-3.5 mr-1.5 text-indigo-600"></i> Edit & Verify</span>
+            </button>
+            <button id="tab-preview-btn" class="px-3.5 py-1.5 rounded-lg text-xs font-semibold text-slate-600 hover:text-slate-900 transition">
+              <span class="flex items-center"><i data-lucide="file-check" class="w-3.5 h-3.5 mr-1.5 text-emerald-600"></i> PDF Preview</span>
+            </button>
+          </div>
+
+          <!-- Template selector -->
+          <div class="flex items-center space-x-2 text-xs">
+            <span class="text-slate-500 font-medium">Style:</span>
+            <select id="template-style-select" class="bg-slate-50 border border-slate-200 text-slate-800 text-xs rounded-lg px-2.5 py-1.5 focus:ring-2 focus:ring-indigo-500 focus:outline-none">
+              <option value="minimal">Clean Minimal</option>
+              <option value="corporate" selected>Corporate Modern</option>
+              <option value="elegant">Monochrome Luxury</option>
+            </select>
+          </div>
+
+          <!-- Print / Download actions -->
+          <div class="flex items-center space-x-2">
+            <button id="direct-print-btn" class="inline-flex items-center px-3 py-1.5 bg-slate-800 hover:bg-slate-900 text-white rounded-lg text-xs font-semibold shadow-sm transition">
+              <i data-lucide="printer" class="w-3.5 h-3.5 mr-1.5"></i>
+              Print
+            </button>
+            <button id="download-pdf-btn" class="inline-flex items-center px-3.5 py-1.5 bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg text-xs font-semibold shadow-sm shadow-indigo-200 transition">
+              <i data-lucide="download" class="w-3.5 h-3.5 mr-1.5"></i>
+              Download PDF
+            </button>
+          </div>
+        </div>
+
+        <!-- TAB 1: INTERACTIVE EDITOR -->
+        <div id="view-editor" class="bg-white rounded-2xl border border-slate-200 p-6 shadow-sm flex flex-col space-y-6">
+          
+          <!-- Invoice Meta Header Form -->
+          <div class="grid grid-cols-1 md:grid-cols-3 gap-4 pb-4 border-b border-slate-100">
+            <div>
+              <label class="block text-xs font-semibold text-slate-500 uppercase">Invoice Number</label>
+              <input type="text" id="inv-number" value="INV-2026-001" class="mt-1 w-full bg-slate-50 border border-slate-200 rounded-lg px-3 py-1.5 text-sm font-mono font-medium focus:bg-white focus:ring-2 focus:ring-indigo-500" />
+            </div>
+            <div>
+              <label class="block text-xs font-semibold text-slate-500 uppercase">Invoice Date</label>
+              <input type="date" id="inv-date" class="mt-1 w-full bg-slate-50 border border-slate-200 rounded-lg px-3 py-1.5 text-sm focus:bg-white focus:ring-2 focus:ring-indigo-500" />
+            </div>
+            <div>
+              <label class="block text-xs font-semibold text-slate-500 uppercase">Due Date</label>
+              <input type="date" id="inv-due-date" class="mt-1 w-full bg-slate-50 border border-slate-200 rounded-lg px-3 py-1.5 text-sm focus:bg-white focus:ring-2 focus:ring-indigo-500" />
+            </div>
+          </div>
+
+          <!-- Vendor & Client Information -->
+          <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
+            <!-- Vendor (From) -->
+            <div class="bg-slate-50/70 p-4 rounded-xl border border-slate-200">
+              <span class="text-xs font-bold uppercase tracking-wider text-indigo-600 flex items-center mb-2">
+                <i data-lucide="building" class="w-3.5 h-3.5 mr-1.5"></i> Biller / Vendor (From)
+              </span>
+              <div class="space-y-2">
+                <input type="text" id="vendor-name" placeholder="Vendor or Business Name" class="w-full text-sm font-semibold bg-white border border-slate-200 rounded-lg px-2.5 py-1.5" />
+                <textarea id="vendor-address" placeholder="Address, City, Postal Code" rows="2" class="w-full text-xs bg-white border border-slate-200 rounded-lg px-2.5 py-1.5"></textarea>
+                <input type="text" id="vendor-contact" placeholder="Phone or Email" class="w-full text-xs bg-white border border-slate-200 rounded-lg px-2.5 py-1.5" />
+              </div>
+            </div>
+
+            <!-- Client (Bill To) -->
+            <div class="bg-slate-50/70 p-4 rounded-xl border border-slate-200">
+              <span class="text-xs font-bold uppercase tracking-wider text-slate-700 flex items-center mb-2">
+                <i data-lucide="user" class="w-3.5 h-3.5 mr-1.5"></i> Client / Customer (Bill To)
+              </span>
+              <div class="space-y-2">
+                <input type="text" id="client-name" placeholder="Client Name or Company" class="w-full text-sm font-semibold bg-white border border-slate-200 rounded-lg px-2.5 py-1.5" />
+                <textarea id="client-address" placeholder="Client Address / Location" rows="2" class="w-full text-xs bg-white border border-slate-200 rounded-lg px-2.5 py-1.5"></textarea>
+                <input type="text" id="client-contact" placeholder="Client Phone or Email" class="w-full text-xs bg-white border border-slate-200 rounded-lg px-2.5 py-1.5" />
+              </div>
+            </div>
+          </div>
+
+          <!-- Line Items Table -->
+          <div>
+            <div class="flex items-center justify-between mb-2">
+              <label class="text-xs font-bold uppercase tracking-wider text-slate-600 flex items-center">
+                <i data-lucide="list-ordered" class="w-3.5 h-3.5 mr-1.5 text-indigo-600"></i>
+                Line Items & Math Engine (Editable)
+              </label>
+              <button id="add-item-row-btn" class="inline-flex items-center text-xs font-semibold text-indigo-600 hover:text-indigo-800 bg-indigo-50 hover:bg-indigo-100 px-2.5 py-1 rounded-lg border border-indigo-200 transition">
+                <i data-lucide="plus" class="w-3.5 h-3.5 mr-1"></i> Add Line Item
+              </button>
+            </div>
+
+            <div class="overflow-x-auto border border-slate-200 rounded-xl">
+              <table class="w-full text-left text-xs border-collapse">
+                <thead class="bg-slate-100/80 text-slate-600 font-semibold uppercase tracking-wider">
+                  <tr>
+                    <th class="py-2.5 px-3">Item Description</th>
+                    <th class="py-2.5 px-2 w-20 text-center">Qty</th>
+                    <th class="py-2.5 px-2 w-28 text-right">Unit Price</th>
+                    <th class="py-2.5 px-3 w-28 text-right">Calculated Total</th>
+                    <th class="py-2.5 px-2 w-10 text-center"></th>
+                  </tr>
+                </thead>
+                <tbody id="line-items-body" class="divide-y divide-slate-200 bg-white">
+                  <!-- Injected via JavaScript -->
+                </tbody>
+              </table>
+            </div>
+          </div>
+
+          <!-- Totals, Taxes, and Discounts Calculator -->
+          <div class="grid grid-cols-1 md:grid-cols-2 gap-6 pt-2">
+            <!-- Notes and Payment Info -->
+            <div class="space-y-3">
+              <div>
+                <label class="block text-xs font-semibold text-slate-500 uppercase">Payment Info / Bank / Notes</label>
+                <textarea id="inv-notes" rows="3" placeholder="Handwritten payment instructions, bank accounts, or notes..." class="mt-1 w-full text-xs bg-slate-50 border border-slate-200 rounded-lg p-2.5 focus:bg-white focus:ring-2 focus:ring-indigo-500"></textarea>
+              </div>
+
+              <div>
+                <label class="block text-xs font-semibold text-slate-500 uppercase">Currency Symbol</label>
+                <div class="flex space-x-2 mt-1">
+                  <select id="currency-select" class="bg-slate-50 border border-slate-200 rounded-lg px-2.5 py-1 text-xs">
+                    <option value="$" selected>USD ($)</option>
+                    <option value="€">EUR (€)</option>
+                    <option value="£">GBP (£)</option>
+                    <option value="₹">INR (₹)</option>
+                    <option value="¥">JPY (¥)</option>
+                    <option value="A$">AUD (A$)</option>
+                    <option value="C$">CAD (C$)</option>
+                  </select>
+                </div>
+              </div>
+            </div>
+
+            <!-- Financial Computation Summary -->
+            <div class="bg-slate-50/80 p-4 rounded-xl border border-slate-200 space-y-2 text-xs">
+              <div class="flex justify-between items-center text-slate-600">
+                <span>Subtotal (Sum of Lines):</span>
+                <span id="summary-subtotal" class="font-mono font-semibold text-slate-900">$0.00</span>
+              </div>
+
+              <div class="flex justify-between items-center text-slate-600">
+                <div class="flex items-center space-x-1">
+                  <span>Tax Rate:</span>
+                  <input type="number" id="tax-rate-input" value="10" step="0.1" min="0" max="100" class="w-14 bg-white border border-slate-200 rounded px-1.5 py-0.5 text-center font-mono text-xs" />
+                  <span>%</span>
+                </div>
+                <span id="summary-tax" class="font-mono font-semibold text-slate-900">$0.00</span>
+              </div>
+
+              <div class="flex justify-between items-center text-slate-600">
+                <div class="flex items-center space-x-1">
+                  <span>Discount:</span>
+                  <input type="number" id="discount-amount-input" value="0" step="1" min="0" class="w-16 bg-white border border-slate-200 rounded px-1.5 py-0.5 text-right font-mono text-xs" />
+                </div>
+                <span id="summary-discount" class="font-mono font-semibold text-rose-600">-$0.00</span>
+              </div>
+
+              <div class="flex justify-between items-center text-slate-600">
+                <div class="flex items-center space-x-1">
+                  <span>Shipping / Extra:</span>
+                  <input type="number" id="shipping-amount-input" value="0" step="1" min="0" class="w-16 bg-white border border-slate-200 rounded px-1.5 py-0.5 text-right font-mono text-xs" />
+                </div>
+                <span id="summary-shipping" class="font-mono font-semibold text-slate-900">$0.00</span>
+              </div>
+
+              <div class="pt-2 border-t border-slate-200 flex justify-between items-baseline">
+                <span class="text-sm font-bold text-slate-900">Grand Total (Verified):</span>
+                <span id="summary-grand-total" class="text-lg font-bold font-mono text-indigo-700">$0.00</span>
+              </div>
+
+              <!-- Handwritten comparison note -->
+              <div class="text-[11px] text-slate-500 pt-1 flex justify-between">
+                <span>Handwritten Original Total:</span>
+                <span id="summary-handwritten-claim" class="font-mono font-medium">$0.00</span>
+              </div>
+            </div>
+          </div>
+
+        </div>
+
+        <!-- TAB 2: RENDERED PRINT / PDF PREVIEW -->
+        <div id="view-preview" class="hidden">
+          
+          <!-- Outer Preview Canvas Container -->
+          <div class="bg-slate-200/70 p-4 sm:p-8 rounded-2xl border border-slate-300 flex justify-center overflow-x-auto min-h-[700px]">
+            
+            <!-- Actual Printable Paper (A4 aspect-ratio mockup) -->
+            <div id="print-area" class="w-full max-w-[800px] bg-white min-h-[960px] p-8 sm:p-12 shadow-xl rounded-sm text-slate-800 transition-all">
+              <!-- Content rendered dynamically by renderInvoiceTemplate() -->
+            </div>
+
+          </div>
+        </div>
+
+      </section>
+    </div>
+  </main>
+
+  <!-- RECENT TRANSACTIONS DRAWER (LAST 10) -->
+  <div id="history-drawer-backdrop" class="fixed inset-0 bg-slate-900/40 backdrop-blur-sm z-50 hidden transition-opacity">
+    <div id="history-drawer" class="absolute right-0 top-0 bottom-0 w-full max-w-md bg-white shadow-2xl flex flex-col transform translate-x-full transition-transform duration-300">
+      
+      <div class="p-4 border-b border-slate-200 flex items-center justify-between bg-slate-50">
+        <div class="flex items-center space-x-2">
+          <i data-lucide="archive" class="w-5 h-5 text-indigo-600"></i>
+          <h2 class="font-bold text-base text-slate-800">Stored Invoices (Last 10)</h2>
+        </div>
+        <button id="close-drawer-btn" class="p-1 rounded-md text-slate-400 hover:text-slate-600 hover:bg-slate-200">
+          <i data-lucide="x" class="w-5 h-5"></i>
+        </button>
+      </div>
+
+      <div class="p-3 bg-amber-50/70 border-b border-amber-200 text-xs text-amber-800 flex items-center justify-between">
+        <span>Stored securely in your local browser cache</span>
+        <button id="clear-all-history-btn" class="text-rose-600 hover:text-rose-800 font-semibold hover:underline">
+          Clear All
+        </button>
+      </div>
+
+      <!-- History List -->
+      <div id="history-list" class="flex-1 overflow-y-auto p-4 space-y-3">
+        <!-- Rendered via JS -->
+      </div>
+
+      <div class="p-4 border-t border-slate-200 text-center text-xs text-slate-500">
+        Auto-saved upon image analysis & math verification
+      </div>
+    </div>
+  </div>
+
+  <!-- CAMERA MODAL -->
+  <div id="camera-modal" class="fixed inset-0 bg-slate-950/75 backdrop-blur-sm z-50 hidden flex items-center justify-center p-4">
+    <div class="bg-white rounded-2xl max-w-lg w-full overflow-hidden shadow-2xl border border-slate-200">
+      <div class="p-4 border-b border-slate-200 flex items-center justify-between">
+        <h3 class="font-bold text-sm text-slate-800 flex items-center">
+          <i data-lucide="camera" class="w-4 h-4 mr-2 text-indigo-600"></i>
+          Capture Handwritten Invoice
+        </h3>
+        <button id="close-camera-btn" class="text-slate-400 hover:text-slate-600">
+          <i data-lucide="x" class="w-5 h-5"></i>
+        </button>
+      </div>
+      <div class="p-4 bg-slate-900 flex justify-center items-center">
+        <video id="camera-stream" autoplay playsinline class="max-h-[360px] w-full rounded-lg object-contain bg-black"></video>
+        <canvas id="camera-canvas" class="hidden"></canvas>
+      </div>
+      <div class="p-4 bg-slate-50 border-t border-slate-200 flex justify-end space-x-2">
+        <button id="cancel-camera-btn" class="px-4 py-2 text-xs font-semibold text-slate-600 hover:bg-slate-200 rounded-lg">Cancel</button>
+        <button id="snap-photo-btn" class="px-4 py-2 text-xs font-semibold bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg inline-flex items-center">
+          <i data-lucide="aperture" class="w-4 h-4 mr-1.5"></i>
+          Capture & Process
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <!-- API KEY MODAL -->
+  <div id="api-key-modal" class="fixed inset-0 bg-slate-950/60 backdrop-blur-sm z-50 hidden flex items-center justify-center p-4">
+    <div class="bg-white rounded-2xl max-w-md w-full p-6 shadow-2xl border border-slate-200 space-y-4">
+      <div class="flex items-center justify-between">
+        <h3 class="font-bold text-base text-slate-900 flex items-center">
+          <i data-lucide="key" class="w-5 h-5 mr-2 text-amber-500"></i>
+          Gemini Vision API Key
+        </h3>
+        <button id="close-api-key-btn" class="text-slate-400 hover:text-slate-600">
+          <i data-lucide="x" class="w-5 h-5"></i>
+        </button>
+      </div>
+
+      <p class="text-xs text-slate-600 leading-relaxed">
+        Leave empty to use the built-in Smart Vision Mock engine, or insert your Google Gemini API key to run direct multimodal handwriting OCR via <code class="bg-slate-100 text-indigo-700 px-1 py-0.5 rounded font-mono">gemini-2.5-flash</code>.
+      </p>
+
+      <div>
+        <label class="block text-xs font-semibold text-slate-500 mb-1">API Key</label>
+        <input type="password" id="custom-api-key" placeholder="AIzaSy..." class="w-full text-xs font-mono bg-slate-50 border border-slate-300 rounded-lg p-2.5 focus:bg-white focus:ring-2 focus:ring-indigo-500" />
+      </div>
+
+      <div class="flex justify-between items-center pt-2">
+        <button id="clear-api-key-btn" class="text-xs text-rose-600 hover:underline">Clear Key</button>
+        <button id="save-api-key-btn" class="px-4 py-2 bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-semibold rounded-lg shadow-sm">
+          Save Configuration
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Toast Notification Container -->
+  <div id="toast-container" class="fixed bottom-5 right-5 z-50 flex flex-col space-y-2 pointer-events-none"></div>
+
+  <!-- APPLICATION JAVASCRIPT -->
+  <script>
+    // State Management
+    const APP_STATE = {
+      apiKey: localStorage.getItem('gemini_api_key') || '',
+      currentImageBase64: null,
+      currentMimeType: 'image/jpeg',
+      sourceName: '',
+      activeTab: 'editor', // 'editor' | 'preview'
+      templateStyle: 'corporate', // 'minimal' | 'corporate' | 'elegant'
+      invoiceData: {
+        id: 'INV-1042',
+        date: new Date().toISOString().split('T')[0],
+        dueDate: new Date(Date.now() + 14 * 86400000).toISOString().split('T')[0],
+        currency: '$',
+        vendor: {
+          name: 'Apex Construction & Repairs',
+          address: '742 Evergreen Terrace, Springfield, OR',
+          contact: '+1 (555) 382-9901 / billing@apexrepairs.com'
+        },
+        client: {
+          name: 'Oakwood Residence Club',
+          address: '1200 Highland Ave, Suite 4B, Springfield, OR',
+          contact: 'manager@oakwoodclub.org'
+        },
+        items: [
+          { description: 'Oak Wood Flooring Planks (Sq. Ft)', quantity: 24, unitPrice: 15.50, total: 372.00 },
+          { description: 'Subfloor Adhesive & Sealant Tubes', quantity: 6, unitPrice: 18.00, total: 108.00 },
+          { description: 'On-site Carpentry & Installation Hours', quantity: 8, unitPrice: 65.00, total: 520.00 }
+        ],
+        subtotal: 1000.00,
+        taxRate: 8.5,
+        taxAmount: 85.00,
+        discount: 25.00,
+        shipping: 40.00,
+        grandTotal: 1100.00,
+        handwrittenTotal: 1080.00, // intentional discrepancy in mock to showcase smart audit
+        notes: 'Payment terms: Net 15 days. Wire transfer to routing #021000021 acct #8849102.',
+        auditStatus: 'discrepancy' // 'match' | 'discrepancy'
+      },
+      history: []
+    };
+
+    // DOM Elements
+    const dropZone = document.getElementById('drop-zone');
+    const fileInput = document.getElementById('file-input');
+    const previewWrapper = document.getElementById('preview-wrapper');
+    const sourceImagePreview = document.getElementById('source-image-preview');
+    const uploadPrompt = document.getElementById('upload-prompt');
+    const scanOverlay = document.getElementById('scan-overlay');
+    const replaceImageBtn = document.getElementById('replace-image-btn');
+    const sourceNameLabel = document.getElementById('source-name');
+    const statusText = document.getElementById('status-text');
+    const discrepancyBadge = document.getElementById('discrepancy-badge');
+
+    // Audit DOM
+    const auditHandwrittenTotal = document.getElementById('audit-handwritten-total');
+    const auditCalculatedTotal = document.getElementById('audit-calculated-total');
+    const auditDifference = document.getElementById('audit-difference');
+
+    // Tab Views
+    const tabEditorBtn = document.getElementById('tab-editor-btn');
+    const tabPreviewBtn = document.getElementById('tab-preview-btn');
+    const viewEditor = document.getElementById('view-editor');
+    const viewPreview = document.getElementById('view-preview');
+    const printArea = document.getElementById('print-area');
+    const templateStyleSelect = document.getElementById('template-style-select');
+
+    // Form inputs
+    const invNumberInput = document.getElementById('inv-number');
+    const invDateInput = document.getElementById('inv-date');
+    const invDueDateInput = document.getElementById('inv-due-date');
+    const vendorNameInput = document.getElementById('vendor-name');
+    const vendorAddressInput = document.getElementById('vendor-address');
+    const vendorContactInput = document.getElementById('vendor-contact');
+    const clientNameInput = document.getElementById('client-name');
+    const clientAddressInput = document.getElementById('client-address');
+    const clientContactInput = document.getElementById('client-contact');
+    const lineItemsBody = document.getElementById('line-items-body');
+    const addItemRowBtn = document.getElementById('add-item-row-btn');
+    const invNotesInput = document.getElementById('inv-notes');
+    const currencySelect = document.getElementById('currency-select');
+    const taxRateInput = document.getElementById('tax-rate-input');
+    const discountAmountInput = document.getElementById('discount-amount-input');
+    const shippingAmountInput = document.getElementById('shipping-amount-input');
+
+    // Summary outputs
+    const summarySubtotal = document.getElementById('summary-subtotal');
+    const summaryTax = document.getElementById('summary-tax');
+    const summaryDiscount = document.getElementById('summary-discount');
+    const summaryShipping = document.getElementById('summary-shipping');
+    const summaryGrandTotal = document.getElementById('summary-grand-total');
+    const summaryHandwrittenClaim = document.getElementById('summary-handwritten-claim');
+
+    // History & Drawers
+    const historyDrawerToggle = document.getElementById('history-drawer-toggle');
+    const historyDrawerBackdrop = document.getElementById('history-drawer-backdrop');
+    const historyDrawer = document.getElementById('history-drawer');
+    const closeDrawerBtn = document.getElementById('close-drawer-btn');
+    const historyList = document.getElementById('history-list');
+    const historyBadge = document.getElementById('history-badge');
+    const clearAllHistoryBtn = document.getElementById('clear-all-history-btn');
+
+    // Camera
+    const cameraTriggerBtn = document.getElementById('camera-trigger-btn');
+    const cameraModal = document.getElementById('camera-modal');
+    const cameraStream = document.getElementById('camera-stream');
+    const cameraCanvas = document.getElementById('camera-canvas');
+    const closeCameraBtn = document.getElementById('close-camera-btn');
+    const cancelCameraBtn = document.getElementById('cancel-camera-btn');
+    const snapPhotoBtn = document.getElementById('snap-photo-btn');
+    let activeMediaStream = null;
+
+    // API Key Modal
+    const apiKeyModalBtn = document.getElementById('api-key-modal-btn');
+    const apiKeyModal = document.getElementById('api-key-modal');
+    const closeApiKeyBtn = document.getElementById('close-api-key-btn');
+    const saveApiKeyBtn = document.getElementById('save-api-key-btn');
+    const clearApiKeyBtn = document.getElementById('clear-api-key-btn');
+    const customApiKeyInput = document.getElementById('custom-api-key');
+    const apiStatusLabel = document.getElementById('api-status-label');
+
+    // Initialize App
+    window.addEventListener('DOMContentLoaded', () => {
+      lucide.createIcons();
+      loadHistoryFromStorage();
+      updateApiKeyUI();
+      populateFormFromState();
+      calculateTotalsAndVerify(false);
+
+      // Setup Date defaults
+      invDateInput.value = APP_STATE.invoiceData.date;
+      invDueDateInput.value = APP_STATE.invoiceData.dueDate;
+
+      // Check URL or setup sample
+      setupEventListeners();
+    });
+
+    function updateApiKeyUI() {
+      if (APP_STATE.apiKey) {
+        apiStatusLabel.textContent = 'Gemini Active';
+        apiStatusLabel.className = 'text-emerald-700 font-semibold';
+      } else {
+        apiStatusLabel.textContent = 'Mock / No Key';
+        apiStatusLabel.className = 'text-slate-600';
+      }
+      customApiKeyInput.value = APP_STATE.apiKey || '';
+    }
+
+    function setupEventListeners() {
+      // Drag and drop
+      dropZone.addEventListener('click', (e) => {
+        if (!APP_STATE.currentImageBase64 || e.target.closest('#replace-image-btn')) {
+          fileInput.click();
+        }
+      });
+      replaceImageBtn.addEventListener('click', () => fileInput.click());
+
+      ['dragenter', 'dragover'].forEach(name => {
+        dropZone.addEventListener(name, (e) => {
+          e.preventDefault();
+          dropZone.classList.add('border-indigo-600', 'bg-indigo-50/50');
+        });
+      });
+
+      ['dragleave', 'drop'].forEach(name => {
+        dropZone.addEventListener(name, (e) => {
+          e.preventDefault();
+          dropZone.classList.remove('border-indigo-600', 'bg-indigo-50/50');
+        });
+      });
+
+      dropZone.addEventListener('drop', (e) => {
+        const files = e.dataTransfer.files;
+        if (files.length > 0) processUploadedFile(files[0]);
+      });
+
+      fileInput.addEventListener('change', (e) => {
+        if (e.target.files.length > 0) processUploadedFile(e.target.files[0]);
+      });
+
+      // Sample invoice button
+      document.getElementById('load-sample-btn').addEventListener('click', loadSampleHandwrittenInvoice);
+      document.getElementById('recalculate-btn').addEventListener('click', () => {
+        calculateTotalsAndVerify(true);
+        showToast('Math engine audited all calculations', 'info');
+      });
+
+      // Tabs
+      tabEditorBtn.addEventListener('click', () => switchTab('editor'));
+      tabPreviewBtn.addEventListener('click', () => switchTab('preview'));
+      templateStyleSelect.addEventListener('change', (e) => {
+        APP_STATE.templateStyle = e.target.value;
+        renderInvoiceTemplate();
+      });
+
+      // Add Line Item
+      addItemRowBtn.addEventListener('click', () => {
+        APP_STATE.invoiceData.items.push({
+          description: 'New Extracted Item',
+          quantity: 1,
+          unitPrice: 0.00,
+          total: 0.00
+        });
+        renderLineItemsTable();
+        calculateTotalsAndVerify(true);
+      });
+
+      // Real-time calculations on input changes
+      [taxRateInput, discountAmountInput, shippingAmountInput, currencySelect].forEach(input => {
+        input.addEventListener('input', () => {
+          syncStateFromInputs();
+          calculateTotalsAndVerify(true);
+        });
+      });
+
+      [invNumberInput, invDateInput, invDueDateInput, vendorNameInput, vendorAddressInput, 
+       vendorContactInput, clientNameInput, clientAddressInput, clientContactInput, invNotesInput].forEach(field => {
+        field.addEventListener('input', () => {
+          syncStateFromInputs();
+          if (APP_STATE.activeTab === 'preview') renderInvoiceTemplate();
+        });
+      });
+
+      // PDF and Print
+      document.getElementById('download-pdf-btn').addEventListener('click', generatePDFDownload);
+      document.getElementById('direct-print-btn').addEventListener('click', handleDirectPrint);
+
+      // History Drawer
+      historyDrawerToggle.addEventListener('click', openHistoryDrawer);
+      closeDrawerBtn.addEventListener('click', closeHistoryDrawer);
+      historyDrawerBackdrop.addEventListener('click', (e) => {
+        if (e.target === historyDrawerBackdrop) closeHistoryDrawer();
+      });
+      clearAllHistoryBtn.addEventListener('click', clearAllHistory);
+
+      // Camera Modal
+      cameraTriggerBtn.addEventListener('click', openCameraModal);
+      closeCameraBtn.addEventListener('click', closeCameraModal);
+      cancelCameraBtn.addEventListener('click', closeCameraModal);
+      snapPhotoBtn.addEventListener('click', snapCameraPicture);
+
+      // API Key Modal
+      apiKeyModalBtn.addEventListener('click', () => apiKeyModal.classList.remove('hidden'));
+      closeApiKeyBtn.addEventListener('click', () => apiKeyModal.classList.add('hidden'));
+      saveApiKeyBtn.addEventListener('click', () => {
+        const key = customApiKeyInput.value.trim();
+        APP_STATE.apiKey = key;
+        if (key) {
+          localStorage.setItem('gemini_api_key', key);
+          showToast('Gemini API key saved', 'success');
+        } else {
+          localStorage.removeItem('gemini_api_key');
+          showToast('Switched to Mock Recognition Engine', 'info');
+        }
+        updateApiKeyUI();
+        apiKeyModal.classList.add('hidden');
+      });
+      clearApiKeyBtn.addEventListener('click', () => {
+        APP_STATE.apiKey = '';
+        localStorage.removeItem('gemini_api_key');
+        customApiKeyInput.value = '';
+        updateApiKeyUI();
+        showToast('API key removed', 'info');
+        apiKeyModal.classList.add('hidden');
+      });
+    }
+
+    function switchTab(tab) {
+      APP_STATE.activeTab = tab;
+      if (tab === 'editor') {
+        tabEditorBtn.className = 'px-3.5 py-1.5 rounded-lg text-xs font-semibold bg-white text-slate-800 shadow-sm transition';
+        tabPreviewBtn.className = 'px-3.5 py-1.5 rounded-lg text-xs font-semibold text-slate-600 hover:text-slate-900 transition';
+        viewEditor.classList.remove('hidden');
+        viewPreview.classList.add('hidden');
+      } else {
+        tabPreviewBtn.className = 'px-3.5 py-1.5 rounded-lg text-xs font-semibold bg-white text-slate-800 shadow-sm transition';
+        tabEditorBtn.className = 'px-3.5 py-1.5 rounded-lg text-xs font-semibold text-slate-600 hover:text-slate-900 transition';
+        viewEditor.classList.add('hidden');
+        viewPreview.classList.remove('hidden');
+        syncStateFromInputs();
+        calculateTotalsAndVerify(false);
+        renderInvoiceTemplate();
+      }
+      lucide.createIcons();
+    }
+
+    // PROCESS UPLOADED IMAGE FILE
+    function processUploadedFile(file) {
+      if (!file.type.match(/image.*/)) {
+        showToast('Please upload an image file (PNG, JPG, or WEBP)', 'error');
+        return;
+      }
+      APP_STATE.sourceName = file.name;
+      APP_STATE.currentMimeType = file.type;
+      sourceNameLabel.textContent = file.name;
+
+      const reader = new FileReader();
+      reader.onload = (e) => {
+        const base64Data = e.target.result;
+        APP_STATE.currentImageBase64 = base64Data;
+        
+        // Show image & trigger OCR
+        sourceImagePreview.src = base64Data;
+        uploadPrompt.classList.add('hidden');
+        previewWrapper.classList.remove('hidden');
+        replaceImageBtn.classList.remove('hidden');
+
+        executeOcrPipeline(base64Data, file.type);
+      };
+      reader.readAsDataURL(file);
+    }
+
+    // GENERATE HIGH REALISM SAMPLE HANDWRITTEN INVOICE CANVAS
+    function loadSampleHandwrittenInvoice() {
+      const canvas = document.createElement('canvas');
+      canvas.width = 750;
+      canvas.height = 980;
+      const ctx = canvas.getContext('2d');
+
+      // Textured paper background
+      ctx.fillStyle = '#fbf9f4';
+      ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+      // Light faint horizontal notebook guide lines
+      ctx.strokeStyle = '#e2dfd5';
+      ctx.lineWidth = 1;
+      for (let y = 140; y < canvas.height - 100; y += 32) {
+        ctx.beginPath();
+        ctx.moveTo(40, y);
+        ctx.lineTo(canvas.width - 40, y);
+        ctx.stroke();
+      }
+
+      // Vertical margin line in light pink/red
+      ctx.strokeStyle = '#f8b4b4';
+      ctx.lineWidth = 1.5;
+      ctx.beginPath();
+      ctx.moveTo(110, 40);
+      ctx.lineTo(110, canvas.height - 40);
+      ctx.stroke();
+
+      // Draw "Handwritten" stylized text (using casual fonts & subtle tilts)
+      ctx.fillStyle = '#1e293b';
+      ctx.font = 'bold 28px "Caveat", "Comic Sans MS", cursive, sans-serif';
+      ctx.fillText('INVOICE / BILL OF WORK', 140, 80);
+
+      ctx.font = '20px "Caveat", "Comic Sans MS", cursive, sans-serif';
+      ctx.fillStyle = '#1e3a8a';
+      ctx.fillText('From: Reliable Plumbing & Heating LLC', 140, 115);
+      ctx.fillStyle = '#334155';
+      ctx.fillText('Bill To: Riverside Bistro (Attn: Marcus)', 140, 150);
+      ctx.fillText('Inv #: RP-9021   |   Date: Oct 20, 2026', 140, 185);
+
+      // Table Header handwritten
+      ctx.fillStyle = '#0f172a';
+      ctx.font = 'bold 18px "Caveat", "Comic Sans MS", cursive, sans-serif';
+      ctx.fillText('Description', 140, 235);
+      ctx.fillText('Qty', 440, 235);
+      ctx.fillText('Rate', 530, 235);
+      ctx.fillText('Total', 630, 235);
+
+      // Table Items with intentional human slight handwriting drift
+      const sampleItems = [
+        { desc: 'Commercial Copper Pipe (10ft)', qty: '4', rate: '$45.00', total: '$180.00', y: 275 },
+        { desc: 'Brass Ball Valve 1-inch', qty: '2', rate: '$32.50', total: '$65.00', y: 310 },
+        { desc: 'Pressure Relief Regulators', qty: '1', rate: '$140.00', total: '$140.00', y: 345 },
+        { desc: 'Emergency Master Labor Hrs', qty: '5', rate: '$85.00', total: '$425.00', y: 380 }
+      ];
+
+      ctx.font = '19px "Caveat", "Comic Sans MS", cursive, sans-serif';
+      sampleItems.forEach(item => {
+        ctx.fillStyle = '#1e293b';
+        ctx.fillText(item.desc, 140, item.y);
+        ctx.fillText(item.qty, 450, item.y);
+        ctx.fillText(item.rate, 530, item.y);
+        ctx.fillText(item.total, 630, item.y);
+      });
+
+      // Totals section (with intentional handwritten mistake: writer summed $800 instead of real $810!)
+      ctx.font = 'bold 20px "Caveat", "Comic Sans MS", cursive, sans-serif';
+      ctx.fillStyle = '#1e293b';
+      ctx.fillText('Subtotal:', 470, 470);
+      ctx.fillText('$810.00', 625, 470);
+
+      ctx.fillText('Sales Tax (10%):', 470, 505);
+      ctx.fillText('$81.00', 635, 505);
+
+      // Handwritten Grand Total with quick ink underline
+      ctx.fillStyle = '#b91c1c';
+      ctx.fillText('Total Due: $890.00', 470, 550); // human scribbled 890 instead of 891!
+      ctx.strokeStyle = '#b91c1c';
+      ctx.lineWidth = 2;
+      ctx.beginPath();
+      ctx.moveTo(470, 560);
+      ctx.lineTo(660, 560);
+      ctx.stroke();
+
+      // Handwritten note & signature at the bottom
+      ctx.fillStyle = '#475569';
+      ctx.font = 'italic 16px "Caveat", "Comic Sans MS", cursive, sans-serif';
+      ctx.fillText('Thank you for your business! Pls pay via Zelle to 555-0199', 140, 640);
+      ctx.fillText('Signed: Dave M. (Lic #PL-8831)', 140, 680);
+
+      const base64 = canvas.toDataURL('image/jpeg', 0.92);
+      APP_STATE.currentImageBase64 = base64;
+      APP_STATE.currentMimeType = 'image/jpeg';
+      APP_STATE.sourceName = 'Sample_Handwritten_Plumbing_Bill.jpg';
+      sourceNameLabel.textContent = APP_STATE.sourceName;
+
+      sourceImagePreview.src = base64;
+      uploadPrompt.classList.add('hidden');
+      previewWrapper.classList.remove('hidden');
+      replaceImageBtn.classList.remove('hidden');
+
+      executeOcrPipeline(base64, 'image/jpeg', true);
+    }
+
+    // MAIN OCR & MATH RECOGNITION PIPELINE
+    async function executeOcrPipeline(base64Data, mimeType, isSample = false) {
+      // 1. Show Laser Scanning animation & status
+      scanOverlay.classList.remove('hidden');
+      statusText.innerHTML = '<span class="text-indigo-600 font-semibold animate-pulse">Scanning handwritten details & verifying arithmetic...</span>';
+
+      try {
+        let extractedData = null;
+
+        if (APP_STATE.apiKey) {
+          // CALL REAL GEMINI 2.5 FLASH MULTIMODAL API
+          extractedData = await callGeminiVisionApi(base64Data, mimeType);
+        } else {
+          // Fallback to internal Vision AI Simulator
+          await new Promise(r => setTimeout(r, 1600)); // simulated realistic OCR latency
+          extractedData = generateSimulatedOcrData(isSample);
+        }
+
+        if (extractedData) {
+          applyExtractedData(extractedData);
+          showToast('Handwritten invoice digitized successfully!', 'success');
+        }
+      } catch (err) {
+        console.error('OCR pipeline error:', err);
+        showToast('Vision recognition failed: ' + err.message + '. Falling back to smart parser.', 'error');
+        const fallback = generateSimulatedOcrData(isSample);
+        applyExtractedData(fallback);
+      } finally {
+        scanOverlay.classList.add('hidden');
+      }
+    }
+
+    // GEMINI MULTIMODAL VISION CALL
+    async function callGeminiVisionApi(base64WithHeader, mimeType) {
+      const pureBase64 = base64WithHeader.split(',')[1] || base64WithHeader;
+      const model = 'gemini-2.5-flash';
+      const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${APP_STATE.apiKey}`;
+
+      const systemInstruction = `You are an expert handwritten invoice OCR and forensic accounting specialist. 
+Extract invoice data accurately from handwritten or semi-printed bills and receipts.
+Parse names, addresses, item descriptions, quantities, unit prices, handwritten subtotal, tax rate, and handwritten grand total.
+Always return strictly valid JSON matching this schema:
+{
+  "invoiceNumber": string,
+  "date": "YYYY-MM-DD",
+  "dueDate": "YYYY-MM-DD",
+  "currency": string,
+  "vendor": { "name": string, "address": string, "contact": string },
+  "client": { "name": string, "address": string, "contact": string },
+  "items": [
+    { "description": string, "quantity": number, "unitPrice": number, "lineTotal": number }
+  ],
+  "subtotal": number,
+  "taxRate": number,
+  "discount": number,
+  "shipping": number,
+  "handwrittenTotal": number,
+  "notes": string
+}`;
+
+      const payload = {
+        contents: [
+          {
+            role: 'user',
+            parts: [
+              { text: "Analyze this handwritten invoice. Extract all vendor/client details, line items, quantities, unit prices, and the handwritten grand total. Return strictly JSON." },
+              {
+                inlineData: {
+                  mimeType: mimeType || 'image/jpeg',
+                  data: pureBase64
+                }
+              }
+            ]
+          }
+        ],
+        systemInstruction: { parts: [{ text: systemInstruction }] },
+        generationConfig: {
+          responseMimeType: "application/json"
+        }
+      };
+
+      const resp = await fetch(url, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload)
+      });
+
+      if (!resp.ok) {
+        const errorBody = await resp.json().catch(() => ({}));
+        throw new Error(errorBody.error?.message || `HTTP ${resp.status}`);
+      }
+
+      const jsonResult = await resp.json();
+      const rawText = jsonResult.candidates?.[0]?.content?.parts?.[0]?.text;
+      if (!rawText) throw new Error("No textual response from Gemini");
+
+      return JSON.parse(rawText);
+    }
+
+    // INTERNAL SMART MOCK OCR (Used when offline or testing without key)
+    function generateSimulatedOcrData(isSample) {
+      if (isSample) {
+        return {
+          invoiceNumber: 'RP-9021',
+          date: '2026-10-20',
+          dueDate: '2026-11-04',
+          currency: '$',
+          vendor: {
+            name: 'Reliable Plumbing & Heating LLC',
+            address: '88 Industriplex Blvd, Suite 2',
+            contact: 'Tel: 555-0199 / dispatch@reliableplumb.com'
+          },
+          client: {
+            name: 'Riverside Bistro (Attn: Marcus)',
+            address: '402 River Road Waterfront Dist',
+            contact: 'marcus@riversidebistro.com'
+          },
+          items: [
+            { description: 'Commercial Copper Pipe (10ft)', quantity: 4, unitPrice: 45.00, lineTotal: 180.00 },
+            { description: 'Brass Ball Valve 1-inch', quantity: 2, unitPrice: 32.50, lineTotal: 65.00 },
+            { description: 'Pressure Relief Regulators', quantity: 1, unitPrice: 140.00, lineTotal: 140.00 },
+            { description: 'Emergency Master Labor Hrs', quantity: 5, unitPrice: 85.00, lineTotal: 425.00 }
+          ],
+          subtotal: 810.00,
+          taxRate: 10.0,
+          discount: 0,
+          shipping: 0,
+          handwrittenTotal: 890.00, // Discrepancy intentional: 810 + 81 = 891!
+          notes: 'Emergency leak repair completed. 30-day warranty on brass fittings. Payment via Zelle.'
+        };
+      }
+
+      // If user uploaded their own image without API key
+      const randomInv = Math.floor(1000 + Math.random() * 9000);
+      return {
+        invoiceNumber: `INV-${randomInv}`,
+        date: new Date().toISOString().split('T')[0],
+        dueDate: new Date(Date.now() + 14 * 86400000).toISOString().split('T')[0],
+        currency: '$',
+        vendor: {
+          name: 'Handwritten Merchant Services',
+          address: '450 Commercial Way, Industrial Park',
+          contact: '+1 800 555-0144'
+        },
+        client: {
+          name: 'Verified Customer',
+          address: '742 Market Street, Floor 3',
+          contact: 'accounts@clientcompany.com'
+        },
+        items: [
+          { description: 'Handwritten Item A (Extracted)', quantity: 3, unitPrice: 45.00, lineTotal: 135.00 },
+          { description: 'Handwritten Item B (Extracted)', quantity: 2, unitPrice: 85.00, lineTotal: 170.00 },
+          { description: 'Consulting & Maintenance', quantity: 1, unitPrice: 120.00, lineTotal: 120.00 }
+        ],
+        subtotal: 425.00,
+        taxRate: 8.25,
+        discount: 15.00,
+        shipping: 20.00,
+        handwrittenTotal: 465.00,
+        notes: 'Handwritten note: "Thank you for prompt settlement."'
+      };
+    }
+
+    // APPLY EXTRACTED DATA TO STATE & UI
+    function applyExtractedData(data) {
+      APP_STATE.invoiceData = {
+        id: data.invoiceNumber || 'INV-2026',
+        date: data.date || new Date().toISOString().split('T')[0],
+        dueDate: data.dueDate || new Date(Date.now() + 14 * 86400000).toISOString().split('T')[0],
+        currency: data.currency || '$',
+        vendor: {
+          name: data.vendor?.name || 'Vendor Name',
+          address: data.vendor?.address || '',
+          contact: data.vendor?.contact || ''
+        },
+        client: {
+          name: data.client?.name || 'Client Name',
+          address: data.client?.address || '',
+          contact: data.client?.contact || ''
+        },
+        items: (data.items || []).map(i => ({
+          description: i.description || 'Item',
+          quantity: parseFloat(i.quantity) || 1,
+          unitPrice: parseFloat(i.unitPrice) || 0,
+          total: (parseFloat(i.quantity) || 1) * (parseFloat(i.unitPrice) || 0)
+        })),
+        subtotal: parseFloat(data.subtotal) || 0,
+        taxRate: parseFloat(data.taxRate) || 0,
+        discount: parseFloat(data.discount) || 0,
+        shipping: parseFloat(data.shipping) || 0,
+        handwrittenTotal: parseFloat(data.handwrittenTotal) || 0,
+        notes: data.notes || ''
+      };
+
+      populateFormFromState();
+      calculateTotalsAndVerify(true);
+      saveTransactionToHistory();
+    }
+
+    // POPULATE FORM
+    function populateFormFromState() {
+      const inv = APP_STATE.invoiceData;
+      invNumberInput.value = inv.id;
+      invDateInput.value = inv.date;
+      invDueDateInput.value = inv.dueDate;
+      vendorNameInput.value = inv.vendor.name;
+      vendorAddressInput.value = inv.vendor.address;
+      vendorContactInput.value = inv.vendor.contact;
+      clientNameInput.value = inv.client.name;
+      clientAddressInput.value = inv.client.address;
+      clientContactInput.value = inv.client.contact;
+      currencySelect.value = inv.currency || '$';
+      taxRateInput.value = inv.taxRate || 0;
+      discountAmountInput.value = inv.discount || 0;
+      shippingAmountInput.value = inv.shipping || 0;
+      invNotesInput.value = inv.notes || '';
+
+      renderLineItemsTable();
+    }
+
+    // RENDER EDITABLE TABLE
+    function renderLineItemsTable() {
+      lineItemsBody.innerHTML = '';
+      const curr = APP_STATE.invoiceData.currency || '$';
+
+      APP_STATE.invoiceData.items.forEach((item, index) => {
+        const tr = document.createElement('tr');
+        tr.className = 'hover:bg-slate-50/80 transition-colors group';
+
+        tr.innerHTML = `
+          <td class="py-2 px-3">
+            <input type="text" value="${escapeHtml(item.description)}" data-idx="${index}" data-field="description" class="item-input w-full bg-transparent border-b border-transparent hover:border-slate-300 focus:border-indigo-500 focus:bg-white rounded px-1.5 py-1 text-slate-800 text-xs font-medium" />
+          </td>
+          <td class="py-2 px-2 text-center">
+            <input type="number" step="any" min="0" value="${item.quantity}" data-idx="${index}" data-field="quantity" class="item-input w-16 text-center bg-slate-50 border border-slate-200 rounded px-1.5 py-1 text-slate-800 font-mono text-xs focus:bg-white focus:ring-1 focus:ring-indigo-500" />
+          </td>
+          <td class="py-2 px-2 text-right">
+            <div class="inline-flex items-center space-x-1">
+              <span class="text-slate-400 font-mono text-xs">${curr}</span>
+              <input type="number" step="0.01" min="0" value="${item.unitPrice.toFixed(2)}" data-idx="${index}" data-field="unitPrice" class="item-input w-20 text-right bg-slate-50 border border-slate-200 rounded px-1.5 py-1 text-slate-800 font-mono text-xs focus:bg-white focus:ring-1 focus:ring-indigo-500" />
+            </div>
+          </td>
+          <td class="py-2 px-3 text-right font-mono font-semibold text-slate-900 line-total-cell" data-idx="${index}">
+            ${curr}${(item.quantity * item.unitPrice).toFixed(2)}
+          </td>
+          <td class="py-2 px-2 text-center">
+            <button class="remove-line-btn text-slate-300 hover:text-rose-600 p-1 rounded transition" data-idx="${index}" title="Remove Item">
+              <i data-lucide="trash-2" class="w-4 h-4"></i>
+            </button>
+          </td>
+        `;
+
+        lineItemsBody.appendChild(tr);
+      });
+
+      // Bind line-item events
+      lineItemsBody.querySelectorAll('.item-input').forEach(input => {
+        input.addEventListener('input', (e) => {
+          const idx = parseInt(e.target.dataset.idx);
+          const field = e.target.dataset.field;
+          let val = e.target.value;
+
+          if (field === 'quantity') {
+            val = parseFloat(val) || 0;
+            APP_STATE.invoiceData.items[idx].quantity = val;
+          } else if (field === 'unitPrice') {
+            val = parseFloat(val) || 0;
+            APP_STATE.invoiceData.items[idx].unitPrice = val;
+          } else {
+            APP_STATE.invoiceData.items[idx].description = val;
+          }
+
+          // Update row line total in DOM
+          const updatedTotal = APP_STATE.invoiceData.items[idx].quantity * APP_STATE.invoiceData.items[idx].unitPrice;
+          APP_STATE.invoiceData.items[idx].total = updatedTotal;
+          const totalCell = lineItemsBody.querySelector(`.line-total-cell[data-idx="${idx}"]`);
+          if (totalCell) {
+            totalCell.textContent = (APP_STATE.invoiceData.currency || '$') + updatedTotal.toFixed(2);
+          }
+
+          calculateTotalsAndVerify(true);
+        });
+      });
+
+      lineItemsBody.querySelectorAll('.remove-line-btn').forEach(btn => {
+        btn.addEventListener('click', (e) => {
+          const target = e.currentTarget;
+          const idx = parseInt(target.dataset.idx);
+          APP_STATE.invoiceData.items.splice(idx, 1);
+          renderLineItemsTable();
+          calculateTotalsAndVerify(true);
+        });
+      });
+
+      lucide.createIcons();
+    }
+
+    // SYNC STATE FROM INPUTS
+    function syncStateFromInputs() {
+      APP_STATE.invoiceData.id = invNumberInput.value;
+      APP_STATE.invoiceData.date = invDateInput.value;
+      APP_STATE.invoiceData.dueDate = invDueDateInput.value;
+      APP_STATE.invoiceData.vendor.name = vendorNameInput.value;
+      APP_STATE.invoiceData.vendor.address = vendorAddressInput.value;
+      APP_STATE.invoiceData.vendor.contact = vendorContactInput.value;
+      APP_STATE.invoiceData.client.name = clientNameInput.value;
+      APP_STATE.invoiceData.client.address = clientAddressInput.value;
+      APP_STATE.invoiceData.client.contact = clientContactInput.value;
+      APP_STATE.invoiceData.currency = currencySelect.value;
+      APP_STATE.invoiceData.taxRate = parseFloat(taxRateInput.value) || 0;
+      APP_STATE.invoiceData.discount = parseFloat(discountAmountInput.value) || 0;
+      APP_STATE.invoiceData.shipping = parseFloat(shippingAmountInput.value) || 0;
+      APP_STATE.invoiceData.notes = invNotesInput.value;
+    }
+
+    // SMART ARITHMETIC VERIFICATION & AUDIT ENGINE
+    function calculateTotalsAndVerify(saveToHistory = false) {
+      const inv = APP_STATE.invoiceData;
+      const curr = inv.currency || '$';
+
+      // 1. Recalculate line totals & sum subtotal
+      let computedSubtotal = 0;
+      inv.items.forEach(item => {
+        const itemLineTotal = Math.round((item.quantity * item.unitPrice) * 100) / 100;
+        item.total = itemLineTotal;
+        computedSubtotal += itemLineTotal;
+      });
+      inv.subtotal = computedSubtotal;
+
+      // 2. Tax computation
+      const computedTax = Math.round((computedSubtotal * (inv.taxRate / 100)) * 100) / 100;
+      inv.taxAmount = computedTax;
+
+      // 3. Discount & Shipping
+      const discount = Math.max(0, inv.discount || 0);
+      const shipping = Math.max(0, inv.shipping || 0);
+
+      // 4. Mathematically verified grand total
+      const verifiedGrandTotal = Math.round((computedSubtotal + computedTax - discount + shipping) * 100) / 100;
+      inv.grandTotal = verifiedGrandTotal;
+
+      // 5. Audit against handwritten claim
+      const handwrittenClaim = inv.handwrittenTotal || verifiedGrandTotal;
+      const diff = Math.abs(verifiedGrandTotal - handwrittenClaim);
+      const isMatch = diff < 0.05; // allow minimal penny rounding
+
+      // Update Audit UI
+      summarySubtotal.textContent = `${curr}${computedSubtotal.toFixed(2)}`;
+      summaryTax.textContent = `${curr}${computedTax.toFixed(2)}`;
+      summaryDiscount.textContent = `-${curr}${discount.toFixed(2)}`;
+      summaryShipping.textContent = `${curr}${shipping.toFixed(2)}`;
+      summaryGrandTotal.textContent = `${curr}${verifiedGrandTotal.toFixed(2)}`;
+      summaryHandwrittenClaim.textContent = `${curr}${handwrittenClaim.toFixed(2)}`;
+
+      auditHandwrittenTotal.textContent = `${curr}${handwrittenClaim.toFixed(2)}`;
+      auditCalculatedTotal.textContent = `${curr}${verifiedGrandTotal.toFixed(2)}`;
+
+      if (isMatch) {
+        inv.auditStatus = 'match';
+        auditDifference.textContent = `$0.00 (Verified Perfect Match)`;
+        auditDifference.className = 'font-mono font-bold text-emerald-600';
+
+        discrepancyBadge.textContent = '✓ Verified Math Match';
+        discrepancyBadge.className = 'px-3 py-1 text-xs rounded-full font-bold bg-emerald-100 text-emerald-800 border border-emerald-300';
+        discrepancyBadge.classList.remove('hidden');
+
+        statusText.innerHTML = '<span class="text-emerald-700 font-semibold">Handwritten sums & items mathematically audited ✓</span>';
+      } else {
+        inv.auditStatus = 'discrepancy';
+        const discrepancyAmount = (verifiedGrandTotal - handwrittenClaim).toFixed(2);
+        const sign = (verifiedGrandTotal - handwrittenClaim) > 0 ? '+' : '';
+        auditDifference.textContent = `${sign}${curr}${discrepancyAmount} (Corrected)`;
+        auditDifference.className = 'font-mono font-bold text-amber-600';
+
+        discrepancyBadge.textContent = `⚠ Math Discrepancy Corrected (${sign}${curr}${discrepancyAmount})`;
+        discrepancyBadge.className = 'px-3 py-1 text-xs rounded-full font-bold bg-amber-100 text-amber-900 border border-amber-300 animate-pulse';
+        discrepancyBadge.classList.remove('hidden');
+
+        statusText.innerHTML = `<span class="text-amber-700 font-medium">Handwritten total was ${curr}${handwrittenClaim.toFixed(2)}, verified total is ${curr}${verifiedGrandTotal.toFixed(2)}</span>`;
+      }
+
+      if (saveToHistory) {
+        saveTransactionToHistory();
+      }
+
+      if (APP_STATE.activeTab === 'preview') {
+        renderInvoiceTemplate();
+      }
+    }
+
+    // RENDER PRINT / PDF TEMPLATES (3 STYLES: Minimal, Corporate, Elegant)
+    function renderInvoiceTemplate() {
+      const inv = APP_STATE.invoiceData;
+      const curr = inv.currency || '$';
+      const style = APP_STATE.templateStyle;
+
+      let templateHtml = '';
+
+      if (style === 'minimal') {
+        // STYLE 1: CLEAN MINIMAL
+        templateHtml = `
+          <div class="font-sans text-slate-800 space-y-8">
+            <div class="flex justify-between items-start border-b border-slate-200 pb-6">
+              <div>
+                <h1 class="text-3xl font-light tracking-tight text-slate-900">INVOICE</h1>
+                <p class="text-xs text-slate-400 font-mono mt-1">#${escapeHtml(inv.id)}</p>
+              </div>
+              <div class="text-right text-xs space-y-1">
+                <p><span class="text-slate-400">Date:</span> <strong class="text-slate-700">${escapeHtml(inv.date)}</strong></p>
+                <p><span class="text-slate-400">Due:</span> <strong class="text-slate-700">${escapeHtml(inv.dueDate)}</strong></p>
+              </div>
+            </div>
+
+            <div class="grid grid-cols-2 gap-8 text-xs leading-relaxed">
+              <div>
+                <p class="text-[10px] font-bold uppercase tracking-wider text-slate-400">From</p>
+                <p class="font-bold text-sm text-slate-900 mt-1">${escapeHtml(inv.vendor.name)}</p>
+                <p class="text-slate-500 whitespace-pre-line">${escapeHtml(inv.vendor.address)}</p>
+                <p class="text-slate-500">${escapeHtml(inv.vendor.contact)}</p>
+              </div>
+              <div>
+                <p class="text-[10px] font-bold uppercase tracking-wider text-slate-400">Billed To</p>
+                <p class="font-bold text-sm text-slate-900 mt-1">${escapeHtml(inv.client.name)}</p>
+                <p class="text-slate-500 whitespace-pre-line">${escapeHtml(inv.client.address)}</p>
+                <p class="text-slate-500">${escapeHtml(inv.client.contact)}</p>
+              </div>
+            </div>
+
+            <table class="w-full text-left text-xs border-collapse">
+              <thead>
+                <tr class="border-b border-slate-200 text-slate-400 font-medium">
+                  <th class="py-2 font-normal">Description</th>
+                  <th class="py-2 text-center font-normal w-16">Qty</th>
+                  <th class="py-2 text-right font-normal w-24">Price</th>
+                  <th class="py-2 text-right font-normal w-28">Amount</th>
+                </tr>
+              </thead>
+              <tbody class="divide-y divide-slate-100">
+                ${inv.items.map(i => `
+                  <tr>
+                    <td class="py-3 text-slate-800 font-medium">${escapeHtml(i.description)}</td>
+                    <td class="py-3 text-center text-slate-600 font-mono">${i.quantity}</td>
+                    <td class="py-3 text-right text-slate-600 font-mono">${curr}${i.unitPrice.toFixed(2)}</td>
+                    <td class="py-3 text-right text-slate-900 font-mono font-semibold">${curr}${(i.quantity * i.unitPrice).toFixed(2)}</td>
+                  </tr>
+                `).join('')}
+              </tbody>
+            </table>
+
+            <div class="flex justify-end pt-4">
+              <div class="w-64 space-y-2 text-xs">
+                <div class="flex justify-between text-slate-500">
+                  <span>Subtotal</span>
+                  <span class="font-mono">${curr}${inv.subtotal.toFixed(2)}</span>
+                </div>
+                ${inv.taxRate > 0 ? `
+                  <div class="flex justify-between text-slate-500">
+                    <span>Tax (${inv.taxRate}%)</span>
+                    <span class="font-mono">${curr}${inv.taxAmount.toFixed(2)}</span>
+                  </div>
+                ` : ''}
+                ${inv.discount > 0 ? `
+                  <div class="flex justify-between text-slate-500">
+                    <span>Discount</span>
+                    <span class="font-mono">-${curr}${inv.discount.toFixed(2)}</span>
+                  </div>
+                ` : ''}
+                ${inv.shipping > 0 ? `
+                  <div class="flex justify-between text-slate-500">
+                    <span>Shipping</span>
+                    <span class="font-mono">${curr}${inv.shipping.toFixed(2)}</span>
+                  </div>
+                ` : ''}
+                <div class="flex justify-between text-sm font-bold border-t border-slate-200 pt-2 text-slate-900">
+                  <span>Total Due</span>
+                  <span class="font-mono">${curr}${inv.grandTotal.toFixed(2)}</span>
+                </div>
+              </div>
+            </div>
+
+            ${inv.notes ? `
+              <div class="border-t border-slate-100 pt-6 text-xs text-slate-500">
+                <p class="font-semibold text-slate-600">Notes & Payment Instructions:</p>
+                <p class="mt-1">${escapeHtml(inv.notes)}</p>
+              </div>
+            ` : ''}
+          </div>
+        `;
+      } else if (style === 'corporate') {
+        // STYLE 2: CORPORATE MODERN (Indigo brand theme)
+        templateHtml = `
+          <div class="font-sans text-slate-800 space-y-6">
+            <div class="bg-gradient-to-r from-indigo-800 to-indigo-950 -m-8 sm:-m-12 p-8 sm:p-12 mb-8 text-white flex justify-between items-center rounded-t-sm">
+              <div>
+                <span class="text-xs font-bold uppercase tracking-widest text-indigo-300">Digitized Tax Invoice</span>
+                <h1 class="text-3xl font-extrabold tracking-tight mt-0.5">${escapeHtml(inv.vendor.name || 'COMPANY NAME')}</h1>
+                <p class="text-xs text-indigo-200 mt-1">${escapeHtml(inv.vendor.contact)}</p>
+              </div>
+              <div class="text-right">
+                <span class="inline-block bg-white/10 backdrop-blur px-3 py-1 rounded-md text-xs font-mono font-semibold tracking-wider text-indigo-100 border border-white/20">
+                  ${escapeHtml(inv.id)}
+                </span>
+                <p class="text-xs text-indigo-200 mt-2">Issued: ${escapeHtml(inv.date)}</p>
+                <p class="text-xs text-indigo-200">Due: ${escapeHtml(inv.dueDate)}</p>
+              </div>
+            </div>
+
+            <div class="grid grid-cols-2 gap-8 text-xs pt-4">
+              <div class="bg-slate-50 p-4 rounded-xl border border-slate-200">
+                <span class="text-[10px] font-bold uppercase tracking-wider text-indigo-600">Biller Details</span>
+                <p class="font-bold text-sm text-slate-900 mt-1">${escapeHtml(inv.vendor.name)}</p>
+                <p class="text-slate-600 whitespace-pre-line mt-1">${escapeHtml(inv.vendor.address)}</p>
+              </div>
+              <div class="bg-slate-50 p-4 rounded-xl border border-slate-200">
+                <span class="text-[10px] font-bold uppercase tracking-wider text-indigo-600">Billed Client</span>
+                <p class="font-bold text-sm text-slate-900 mt-1">${escapeHtml(inv.client.name)}</p>
+                <p class="text-slate-600 whitespace-pre-line mt-1">${escapeHtml(inv.client.address)}</p>
+                <p class="text-slate-500 mt-1">${escapeHtml(inv.client.contact)}</p>
+              </div>
+            </div>
+
+            <div class="overflow-hidden rounded-xl border border-slate-200">
+              <table class="w-full text-left text-xs border-collapse">
+                <thead class="bg-indigo-50/70 text-indigo-950 font-bold uppercase tracking-wider">
+                  <tr>
+                    <th class="py-3 px-4">Item & Description</th>
+                    <th class="py-3 px-3 text-center w-20">Quantity</th>
+                    <th class="py-3 px-3 text-right w-28">Rate</th>
+                    <th class="py-3 px-4 text-right w-32">Total</th>
+                  </tr>
+                </thead>
+                <tbody class="divide-y divide-slate-200 bg-white">
+                  ${inv.items.map((i, idx) => `
+                    <tr class="${idx % 2 === 0 ? 'bg-white' : 'bg-slate-50/50'}">
+                      <td class="py-3 px-4 font-semibold text-slate-800">${escapeHtml(i.description)}</td>
+                      <td class="py-3 px-3 text-center font-mono text-slate-600">${i.quantity}</td>
+                      <td class="py-3 px-3 text-right font-mono text-slate-600">${curr}${i.unitPrice.toFixed(2)}</td>
+                      <td class="py-3 px-4 text-right font-mono font-bold text-indigo-950">${curr}${(i.quantity * i.unitPrice).toFixed(2)}</td>
+                    </tr>
+                  `).join('')}
+                </tbody>
+              </table>
+            </div>
+
+            <div class="grid grid-cols-2 gap-8 pt-2">
+              <div class="text-xs text-slate-500 space-y-2">
+                <div class="p-3 bg-slate-50 rounded-xl border border-slate-200">
+                  <p class="font-semibold text-slate-700">Payment & Accounting Notes</p>
+                  <p class="mt-1 leading-relaxed">${escapeHtml(inv.notes || 'Payment terms per contract agreement.')}</p>
+                </div>
+                <div class="p-2.5 bg-emerald-50 rounded-xl border border-emerald-200 text-emerald-800 text-[11px] flex items-center space-x-2">
+                  <span>✓ Digitally verified math calculation</span>
+                </div>
+              </div>
+
+              <div class="space-y-2 text-xs">
+                <div class="flex justify-between text-slate-600">
+                  <span>Subtotal Amount:</span>
+                  <span class="font-mono font-semibold">${curr}${inv.subtotal.toFixed(2)}</span>
+                </div>
+                ${inv.taxRate > 0 ? `
+                  <div class="flex justify-between text-slate-600">
+                    <span>Sales Tax (${inv.taxRate}%):</span>
+                    <span class="font-mono font-semibold">${curr}${inv.taxAmount.toFixed(2)}</span>
+                  </div>
+                ` : ''}
+                ${inv.discount > 0 ? `
+                  <div class="flex justify-between text-rose-600">
+                    <span>Applied Discount:</span>
+                    <span class="font-mono font-semibold">-${curr}${inv.discount.toFixed(2)}</span>
+                  </div>
+                ` : ''}
+                ${inv.shipping > 0 ? `
+                  <div class="flex justify-between text-slate-600">
+                    <span>Shipping / Logistics:</span>
+                    <span class="font-mono font-semibold">${curr}${inv.shipping.toFixed(2)}</span>
+                  </div>
+                ` : ''}
+                <div class="flex justify-between items-baseline pt-2 border-t-2 border-indigo-900 text-indigo-950">
+                  <span class="text-sm font-black">Verified Grand Total:</span>
+                  <span class="text-xl font-black font-mono">${curr}${inv.grandTotal.toFixed(2)}</span>
+                </div>
+              </div>
+            </div>
+          </div>
+        `;
+      } else {
+        // STYLE 3: ELEGANT MONOCHROME LUXURY
+        templateHtml = `
+          <div class="font-serif text-slate-900 space-y-8">
+            <div class="text-center pb-6 border-b-2 border-slate-900">
+              <span class="text-[11px] tracking-[0.3em] uppercase text-slate-500 font-sans">Statement of Account</span>
+              <h1 class="text-3xl tracking-widest font-normal uppercase mt-1">${escapeHtml(inv.vendor.name || 'INVOICE')}</h1>
+              <p class="text-xs text-slate-500 font-sans mt-1">Invoice Ref: #${escapeHtml(inv.id)} &bull; ${escapeHtml(inv.date)}</p>
+            </div>
+
+            <div class="flex justify-between text-xs font-sans">
+              <div>
+                <p class="text-[10px] tracking-widest uppercase font-bold text-slate-400">Merchant</p>
+                <p class="font-serif text-base font-bold mt-1">${escapeHtml(inv.vendor.name)}</p>
+                <p class="text-slate-600 whitespace-pre-line">${escapeHtml(inv.vendor.address)}</p>
+                <p class="text-slate-500">${escapeHtml(inv.vendor.contact)}</p>
+              </div>
+              <div class="text-right">
+                <p class="text-[10px] tracking-widest uppercase font-bold text-slate-400">Recipient</p>
+                <p class="font-serif text-base font-bold mt-1">${escapeHtml(inv.client.name)}</p>
+                <p class="text-slate-600 whitespace-pre-line">${escapeHtml(inv.client.address)}</p>
+                <p class="text-slate-500">${escapeHtml(inv.client.contact)}</p>
+              </div>
+            </div>
+
+            <table class="w-full text-left text-xs font-sans border-collapse">
+              <thead>
+                <tr class="border-b-2 border-slate-900 text-slate-900 uppercase tracking-widest text-[10px]">
+                  <th class="py-2.5">Item</th>
+                  <th class="py-2.5 text-center w-16">Qty</th>
+                  <th class="py-2.5 text-right w-24">Rate</th>
+                  <th class="py-2.5 text-right w-28">Amount</th>
+                </tr>
+              </thead>
+              <tbody class="divide-y divide-slate-200">
+                ${inv.items.map(i => `
+                  <tr>
+                    <td class="py-3 font-medium text-slate-900">${escapeHtml(i.description)}</td>
+                    <td class="py-3 text-center text-slate-600 font-mono">${i.quantity}</td>
+                    <td class="py-3 text-right text-slate-600 font-mono">${curr}${i.unitPrice.toFixed(2)}</td>
+                    <td class="py-3 text-right font-mono font-semibold text-slate-900">${curr}${(i.quantity * i.unitPrice).toFixed(2)}</td>
+                  </tr>
+                `).join('')}
+              </tbody>
+            </table>
+
+            <div class="flex justify-end pt-4 font-sans text-xs">
+              <div class="w-64 space-y-2">
+                <div class="flex justify-between text-slate-600">
+                  <span>Subtotal:</span>
+                  <span class="font-mono">${curr}${inv.subtotal.toFixed(2)}</span>
+                </div>
+                ${inv.taxRate > 0 ? `
+                  <div class="flex justify-between text-slate-600">
+                    <span>Tax (${inv.taxRate}%):</span>
+                    <span class="font-mono">${curr}${inv.taxAmount.toFixed(2)}</span>
+                  </div>
+                ` : ''}
+                ${inv.discount > 0 ? `
+                  <div class="flex justify-between text-slate-600">
+                    <span>Discount:</span>
+                    <span class="font-mono">-${curr}${inv.discount.toFixed(2)}</span>
+                  </div>
+                ` : ''}
+                <div class="flex justify-between items-baseline pt-2 border-t-2 border-slate-900 text-base font-bold text-slate-900">
+                  <span>Total Payable:</span>
+                  <span class="font-mono">${curr}${inv.grandTotal.toFixed(2)}</span>
+                </div>
+              </div>
+            </div>
+
+            <div class="pt-8 border-t border-slate-200 text-center font-sans text-[11px] text-slate-400">
+              <p>${escapeHtml(inv.notes || 'Thank you for your patronage.')}</p>
+            </div>
+          </div>
+        `;
+      }
+
+      printArea.innerHTML = templateHtml;
+    }
+
+    // DIRECT NATIVE BROWSER PRINT
+    function handleDirectPrint() {
+      // Ensure preview is freshly rendered
+      renderInvoiceTemplate();
+      window.print();
+    }
+
+    // DOWNLOAD HIGH-QUALITY PDF VIA HTML2PDF
+    async function generatePDFDownload() {
+      const inv = APP_STATE.invoiceData;
+      renderInvoiceTemplate();
+
+      const element = document.getElementById('print-area');
+      const opt = {
+        margin: [10, 10, 10, 10],
+        filename: `${inv.id || 'Invoice'}_Digitized.pdf`,
+        image: { type: 'jpeg', quality: 0.98 },
+        html2canvas: { scale: 2, useCORS: true, logging: false },
+        jsPDF: { unit: 'mm', format: 'a4', orientation: 'portrait' }
+      };
+
+      showToast('Compiling high-resolution PDF...', 'info');
+
+      try {
+        await html2pdf().set(opt).from(element).save();
+        showToast('PDF downloaded successfully!', 'success');
+      } catch (err) {
+        console.error('PDF export failed:', err);
+        showToast('Failed to compile PDF. Falling back to native print dialog.', 'error');
+        window.print();
+      }
+    }
+
+    // TRANSACTION HISTORY ENGINE (LAST 10 TRANSACTIONS)
+    function saveTransactionToHistory() {
+      const inv = APP_STATE.invoiceData;
+      const historyItem = {
+        timestamp: Date.now(),
+        id: inv.id,
+        date: inv.date,
+        clientName: inv.client.name,
+        grandTotal: inv.grandTotal,
+        currency: inv.currency,
+        auditStatus: inv.auditStatus,
+        fullState: JSON.parse(JSON.stringify(inv)),
+        previewImage: APP_STATE.currentImageBase64
+      };
+
+      // Filter out duplicate IDs
+      APP_STATE.history = APP_STATE.history.filter(h => h.id !== inv.id);
+
+      // Add to front and limit to 10
+      APP_STATE.history.unshift(historyItem);
+      if (APP_STATE.history.length > 10) {
+        APP_STATE.history = APP_STATE.history.slice(0, 10);
+      }
+
+      try {
+        localStorage.setItem('scriptinvoice_history', JSON.stringify(APP_STATE.history));
+      } catch (e) {
+        console.warn('localStorage full, saving without full base64 images', e);
+        const slim = APP_STATE.history.map(h => ({ ...h, previewImage: null }));
+        localStorage.setItem('scriptinvoice_history', JSON.stringify(slim));
+      }
+
+      renderHistoryUI();
+    }
+
+    function loadHistoryFromStorage() {
+      try {
+        const stored = localStorage.getItem('scriptinvoice_history');
+        if (stored) {
+          APP_STATE.history = JSON.parse(stored);
+        }
+      } catch (e) {
+        console.error('Failed reading history:', e);
+        APP_STATE.history = [];
+      }
+      renderHistoryUI();
+    }
+
+    function renderHistoryUI() {
+      historyBadge.textContent = APP_STATE.history.length;
+      historyList.innerHTML = '';
+
+      if (APP_STATE.history.length === 0) {
+        historyList.innerHTML = `
+          <div class="text-center py-12 text-slate-400">
+            <i data-lucide="inbox" class="w-8 h-8 mx-auto mb-2 opacity-40"></i>
+            <p class="text-xs">No stored invoices yet.</p>
+            <p class="text-[11px] text-slate-400">Scanned invoices will appear here automatically.</p>
+          </div>
+        `;
+        lucide.createIcons();
+        return;
+      }
+
+      APP_STATE.history.forEach((tx, index) => {
+        const card = document.createElement('div');
+        card.className = 'bg-slate-50 hover:bg-indigo-50/40 p-3 rounded-xl border border-slate-200 transition-all cursor-pointer flex items-center justify-between group';
+        
+        const isMatch = tx.auditStatus === 'match';
+
+        card.innerHTML = `
+          <div class="flex items-center space-x-3 overflow-hidden">
+            <div class="w-9 h-9 rounded-lg bg-white border border-slate-200 flex items-center justify-center shrink-0">
+              <i data-lucide="${isMatch ? 'check-circle-2' : 'alert-circle'}" class="w-5 h-5 ${isMatch ? 'text-emerald-500' : 'text-amber-500'}"></i>
+            </div>
+            <div class="truncate">
+              <div class="flex items-center space-x-2">
+                <span class="font-bold text-xs text-slate-800">${escapeHtml(tx.id)}</span>
+                <span class="text-[10px] text-slate-400 font-mono">${new Date(tx.timestamp).toLocaleDateString()}</span>
+              </div>
+              <p class="text-xs text-slate-500 truncate max-w-[170px]">${escapeHtml(tx.clientName || 'Unnamed Client')}</p>
+            </div>
+          </div>
+
+          <div class="text-right shrink-0">
+            <span class="font-mono font-bold text-xs text-slate-900">${tx.currency}${tx.grandTotal.toFixed(2)}</span>
+            <div class="flex items-center justify-end space-x-1.5 mt-1">
+              <button class="delete-history-btn text-slate-300 hover:text-rose-600 p-0.5 rounded transition" data-idx="${index}" title="Delete">
+                <i data-lucide="trash-2" class="w-3.5 h-3.5"></i>
+              </button>
+            </div>
+          </div>
+        `;
+
+        card.addEventListener('click', (e) => {
+          if (e.target.closest('.delete-history-btn')) return;
+          loadHistoryTransaction(tx);
+          closeHistoryDrawer();
+        });
+
+        historyList.appendChild(card);
+      });
+
+      // Bind individual deletes
+      historyList.querySelectorAll('.delete-history-btn').forEach(btn => {
+        btn.addEventListener('click', (e) => {
+          e.stopPropagation();
+          const idx = parseInt(e.currentTarget.dataset.idx);
+          APP_STATE.history.splice(idx, 1);
+          localStorage.setItem('scriptinvoice_history', JSON.stringify(APP_STATE.history));
+          renderHistoryUI();
+          showToast('Invoice removed from history', 'info');
+        });
+      });
+
+      lucide.createIcons();
+    }
+
+    function loadHistoryTransaction(tx) {
+      APP_STATE.invoiceData = JSON.parse(JSON.stringify(tx.fullState));
+      if (tx.previewImage) {
+        APP_STATE.currentImageBase64 = tx.previewImage;
+        sourceImagePreview.src = tx.previewImage;
+        uploadPrompt.classList.add('hidden');
+        previewWrapper.classList.remove('hidden');
+        replaceImageBtn.classList.remove('hidden');
+        sourceNameLabel.textContent = tx.id + '.jpg';
+      }
+      populateFormFromState();
+      calculateTotalsAndVerify(false);
+      showToast(`Loaded invoice ${tx.id}`, 'success');
+    }
+
+    function clearAllHistory() {
+      if (APP_STATE.history.length === 0) return;
+      APP_STATE.history = [];
+      localStorage.removeItem('scriptinvoice_history');
+      renderHistoryUI();
+      showToast('All transaction history cleared', 'info');
+    }
+
+    function openHistoryDrawer() {
+      historyDrawerBackdrop.classList.remove('hidden');
+      setTimeout(() => historyDrawer.classList.remove('translate-x-full'), 10);
+    }
+
+    function closeHistoryDrawer() {
+      historyDrawer.classList.add('translate-x-full');
+      setTimeout(() => historyDrawerBackdrop.classList.add('hidden'), 250);
+    }
+
+    // CAMERA INTEGRATION
+    async function openCameraModal() {
+      cameraModal.classList.remove('hidden');
+      try {
+        activeMediaStream = await navigator.mediaDevices.getUserMedia({
+          video: { facingMode: 'environment', width: { ideal: 1280 }, height: { ideal: 720 } },
+          audio: false
+        });
+        cameraStream.srcObject = activeMediaStream;
+      } catch (err) {
+        console.error('Camera access error:', err);
+        showToast('Unable to access camera: ' + err.message, 'error');
+        closeCameraModal();
+      }
+    }
+
+    function closeCameraModal() {
+      if (activeMediaStream) {
+        activeMediaStream.getTracks().forEach(track => track.stop());
+        activeMediaStream = null;
+      }
+      cameraModal.classList.add('hidden');
+    }
+
+    function snapCameraPicture() {
+      if (!activeMediaStream) return;
+      cameraCanvas.width = cameraStream.videoWidth || 640;
+      cameraCanvas.height = cameraStream.videoHeight || 480;
+      const ctx = cameraCanvas.getContext('2d');
+      ctx.drawImage(cameraStream, 0, 0, cameraCanvas.width, cameraCanvas.height);
+
+      const capturedBase64 = cameraCanvas.toDataURL('image/jpeg', 0.95);
+      APP_STATE.currentImageBase64 = capturedBase64;
+      APP_STATE.currentMimeType = 'image/jpeg';
+      APP_STATE.sourceName = `Camera_Snapshot_${Date.now()}.jpg`;
+      sourceNameLabel.textContent = APP_STATE.sourceName;
+
+      sourceImagePreview.src = capturedBase64;
+      uploadPrompt.classList.add('hidden');
+      previewWrapper.classList.remove('hidden');
+      replaceImageBtn.classList.remove('hidden');
+
+      closeCameraModal();
+      executeOcrPipeline(capturedBase64, 'image/jpeg');
+    }
+
+    // TOAST SYSTEM
+    function showToast(msg, type = 'info') {
+      const toast = document.createElement('div');
+      const colors = {
+        success: 'bg-emerald-800 text-emerald-100 border-emerald-700',
+        error: 'bg-rose-800 text-rose-100 border-rose-700',
+        info: 'bg-slate-900 text-white border-slate-700'
+      };
+
+      toast.className = `px-4 py-2.5 rounded-xl border text-xs font-medium shadow-xl flex items-center space-x-2 transition-all duration-300 transform translate-y-3 opacity-0 pointer-events-auto ${colors[type] || colors.info}`;
+      toast.innerHTML = `
+        <span class="w-1.5 h-1.5 rounded-full ${type === 'success' ? 'bg-emerald-400' : type === 'error' ? 'bg-rose-400' : 'bg-cyan-400'}"></span>
+        <span>${escapeHtml(msg)}</span>
+      `;
+
+      const container = document.getElementById('toast-container');
+      container.appendChild(toast);
+
+      requestAnimationFrame(() => {
+        toast.classList.remove('translate-y-3', 'opacity-0');
+      });
+
+      setTimeout(() => {
+        toast.classList.add('opacity-0', 'translate-y-2');
+        setTimeout(() => toast.remove(), 300);
+      }, 3500);
+    }
+
+    function escapeHtml(str) {
+      if (typeof str !== 'string') return str || '';
+      return str.replace(/[&<>'"]/g, tag => ({
+        '&': '&amp;',
+        '<': '&lt;',
+        '>': '&gt;',
+        "'": '&#39;',
+        '"': '&quot;'
+      }[tag] || tag));
+    }
+  </script>
+</body>
+</html>
